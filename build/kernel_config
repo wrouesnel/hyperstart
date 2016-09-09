@@ -2223,7 +2223,7 @@ CONFIG_DEFAULT_IO_DELAY_TYPE=0
 #
 # Security options
 #
-# CONFIG_KEYS is not set
+CONFIG_KEYS=y
 # CONFIG_SECURITY_DMESG_RESTRICT is not set
 # CONFIG_SECURITY is not set
 # CONFIG_SECURITYFS is not set
