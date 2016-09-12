@@ -18,7 +18,7 @@ COPY kernel_config /root/build/linux-${KERNEL_VERSION}/.config
 COPY kernel_patch/ /root/build/kernel_patch/
 
 RUN cd /root/build/linux-${KERNEL_VERSION}/ && for patch in /root/build/kernel_patch/*.patch; do patch -p1 <$patch || exit 1; done
-RUN cd /root/build/linux-${KERNEL_VERSION}/ && make silentoldconfig && make -j 8
+RUN cd /root/build/linux-${KERNEL_VERSION}/ && make olddefconfig && make -j 8
 
 # install to /root/build/result/ so that we can get them from it
 RUN cp /root/build/linux-${KERNEL_VERSION}/arch/x86_64/boot/bzImage /root/build/result/kernel
