@@ -12,6 +12,19 @@ AC_CONFIG_HEADERS([config.h])
 AC_PROG_CC
 AM_PROG_CC_C_O
 # Checks for libraries.
+LIBS="-lcgroup $LIBS"
+AC_ARG_WITH([cgroup],
+    [AS_HELP_STRING([--with-cgroup=prefix],
+        [set non-standard install path for cgroup library])],
+    [cgroupPATHSET=1],
+    [cgroupPATHSET=0])
+
+# if optional parameter used, extend path flags for compliler and linker
+if test $cgroupPATHSET = 1 ; then
+    # extend the compiler and linker flags according to the path set
+    AM_CXXFLAGS="$AM_CXXFLAGS -I$with_cgroup/include"
+    AM_LDFLAGS="$AM_LDFLAGS -L$with_cgroup/lib"
+fi
 
 # Checks for header files.
 AC_CHECK_HEADERS([arpa/inet.h fcntl.h limits.h stddef.h stdint.h stdlib.h string.h sys/mount.h sys/socket.h unistd.h],
