@@ -288,7 +288,7 @@ static int hyper_setup_pod_init(struct hyper_pod *pod)
 
 	uint32_t type;
 	void *stack;
-	int ret = -1, init_pid;
+	int ret = -1;
 
 	if (pipe2(arg.ctl_pipe, O_CLOEXEC) < 0) {
 		perror("create pipe between hyper init and pod init failed");
@@ -303,13 +303,13 @@ static int hyper_setup_pod_init(struct hyper_pod *pod)
 
 	arg.pod = pod;
 
-	init_pid = clone(hyper_pod_init, stack + stacksize, flags, &arg);
+	pod->init_pid = clone(hyper_pod_init, stack + stacksize, flags, &arg);
 	free(stack);
-	if (init_pid < 0) {
+	if (pod->init_pid < 0) {
 		perror("create container init process failed");
 		goto out;
 	}
-	fprintf(stdout, "pod init pid %d\n", init_pid);
+	fprintf(stdout, "pod init pid %d\n", pod->init_pid);
 
 	/* Wait for container start */
 	if (hyper_get_type(arg.ctl_pipe[0], &type) < 0) {
@@ -322,7 +322,6 @@ static int hyper_setup_pod_init(struct hyper_pod *pod)
 		goto out;
 	}
 
-	pod->init_pid = init_pid;
 	ret = 0;
 out:
 	close(arg.ctl_pipe[1]);
@@ -422,12 +421,12 @@ static int hyper_setup_shared(struct hyper_pod *pod)
 	struct vbsf_mount_info_new mntinf;
 
 	if (pod->share_tag == NULL) {
-		fprintf(stdout, "no shared directory\n");
+		fprintf(stdout, "no shared directroy\n");
 		return 0;
 	}
 
-	if (hyper_mkdir(SHARED_DIR, 0755) < 0) {
-		perror("fail to create " SHARED_DIR);
+	if (hyper_mkdir("/tmp/hyper/shared", 0755) < 0) {
+		perror("fail to create /tmp/hyper/shared");
 		return -1;
 	}
 
@@ -441,7 +440,7 @@ static int hyper_setup_shared(struct hyper_pod *pod)
 	mntinf.fmode		= ~0U;
 	strcpy(mntinf.name, pod->share_tag);
 
-	if (mount(NULL, SHARED_DIR, "vboxsf",
+	if (mount(NULL, "/tmp/hyper/shared", "vboxsf",
 		  MS_NODEV, &mntinf) < 0) {
 		perror("fail to mount shared dir");
 		return -1;
@@ -453,16 +452,16 @@ static int hyper_setup_shared(struct hyper_pod *pod)
 static int hyper_setup_shared(struct hyper_pod *pod)
 {
 	if (pod->share_tag == NULL) {
-		fprintf(stdout, "no shared directory\n");
+		fprintf(stdout, "no shared directroy\n");
 		return 0;
 	}
 
-	if (hyper_mkdir(SHARED_DIR, 0755) < 0) {
-		perror("fail to create " SHARED_DIR);
+	if (hyper_mkdir("/tmp/hyper/shared", 0755) < 0) {
+		perror("fail to create /tmp/hyper/shared");
 		return -1;
 	}
 
-	if (mount(pod->share_tag, SHARED_DIR, "9p",
+	if (mount(pod->share_tag, "/tmp/hyper/shared", "9p",
 		  MS_MGC_VAL| MS_NODEV, "trans=virtio") < 0) {
 
 		perror("fail to mount shared dir");
@@ -475,7 +474,7 @@ static int hyper_setup_shared(struct hyper_pod *pod)
 
 static int hyper_setup_pod(struct hyper_pod *pod)
 {
-	/* create tmp proc directory */
+	/* create tmp proc directroy */
 	if (hyper_mkdir("/tmp/hyper/proc", 0755) < 0) {
 		perror("create tmp proc failed");
 		return -1;
@@ -654,31 +653,22 @@ out:
 
 static int hyper_cmd_write_file(char *json, int length)
 {
-	struct file_command cmd;
+	struct hyper_writter writter;
 	struct hyper_container *c;
 	struct hyper_pod *pod = &global_pod;
 	int pipe[2] = {-1, -1};
 	int pid, mntns = -1, fd;
-	int datalen, len = 0, size, ret = -1;
-	char *data = NULL;
+	int len = 0, size, ret = -1;
 
 	fprintf(stdout, "%s\n", __func__);
 
-	// TODO: send the data via hyperstream rather than append it at the end of the command
-	data = strchr(json, '}');
-	if (data == NULL) {
-		goto out;
-	}
-	data++;
-	datalen = length - (data - json);
-	length = data - json;
-	if (hyper_parse_file_command(&cmd, json, length) < 0) {
+	if (hyper_parse_write_file(&writter, json, length) < 0) {
 		goto out;
 	}
 
-	c = hyper_find_container(pod, cmd.id);
+	c = hyper_find_container(pod, writter.id);
 	if (c == NULL) {
-		fprintf(stderr, "can not find container whose id is %s\n", cmd.id);
+		fprintf(stderr, "can not find container whose id is %s\n", writter.id);
 		goto out;
 	}
 
@@ -715,16 +705,16 @@ static int hyper_cmd_write_file(char *json, int length)
 		goto exit;
 	}
 
-	fprintf(stdout, "write file %s, data len %d\n", cmd.file, datalen);
+	fprintf(stdout, "write file %s, data len %d\n", writter.file, writter.len);
 
-	fd = open(cmd.file, O_CREAT| O_TRUNC| O_WRONLY, 0644);
+	fd = open(writter.file, O_CREAT| O_TRUNC| O_WRONLY, 0644);
 	if (fd < 0) {
 		perror("fail to open target file");
 		goto exit;
 	}
 
-	while(len < datalen) {
-		size = write(fd, data + len, datalen - len);
+	while(len < writter.len) {
+		size = write(fd, writter.data + len, writter.len - len);
 
 		if (size < 0) {
 			if (errno == EINTR)
@@ -743,8 +733,9 @@ exit:
 out:
 	close(pipe[0]);
 	close(pipe[1]);
-	free(cmd.id);
-	free(cmd.file);
+	free(writter.id);
+	free(writter.file);
+	free(writter.data);
 
 	return 0;
 }
@@ -814,7 +805,7 @@ err:
 
 static int hyper_cmd_read_file(char *json, int length, uint32_t *datalen, uint8_t **data)
 {
-	struct file_command cmd;
+	struct hyper_reader reader;
 	struct hyper_container *c;
 	struct hyper_pod *pod = &global_pod;
 	struct hyper_file_arg arg = {
@@ -827,13 +818,13 @@ static int hyper_cmd_read_file(char *json, int length, uint32_t *datalen, uint8_
 
 	fprintf(stdout, "%s\n", __func__);
 
-	if (hyper_parse_file_command(&cmd, json, length) < 0) {
+	if (hyper_parse_read_file(&reader, json, length) < 0) {
 		goto out;
 	}
 
-	c = hyper_find_container(pod, cmd.id);
+	c = hyper_find_container(pod, reader.id);
 	if (c == NULL) {
-		fprintf(stderr, "can not find container whose id is %s\n", cmd.id);
+		fprintf(stderr, "can not find container whose id is %s\n", reader.id);
 		goto out;
 	}
 
@@ -848,7 +839,7 @@ static int hyper_cmd_read_file(char *json, int length, uint32_t *datalen, uint8_
 		goto out;
 	}
 
-	arg.file = cmd.file;
+	arg.file = reader.file;
 	arg.datalen = datalen;
 	arg.data = data;
 
@@ -860,7 +851,7 @@ static int hyper_cmd_read_file(char *json, int length, uint32_t *datalen, uint8_
 
 	pid = clone(hyper_do_cmd_read_file, stack + stacksize, CLONE_VM| SIGQUIT, &arg);
 	if (pid < 0) {
-		perror("fail to fork reader process");
+		perror("fail to fork writter process");
 		goto out;
 	}
 
@@ -878,8 +869,8 @@ static int hyper_cmd_read_file(char *json, int length, uint32_t *datalen, uint8_
 out:
 	close(arg.pipe[0]);
 	close(arg.pipe[1]);
-	free(cmd.id);
-	free(cmd.file);
+	free(reader.id);
+	free(reader.file);
 	free(stack);
 
 	return ret;
@@ -906,20 +897,20 @@ static void hyper_cleanup_hostname(struct hyper_pod *pod)
 static void hyper_cleanup_shared(struct hyper_pod *pod)
 {
 	if (pod->share_tag == NULL) {
-		fprintf(stdout, "no shared directory\n");
+		fprintf(stdout, "no shared directroy\n");
 		return;
 	}
 
 	free(pod->share_tag);
 	pod->share_tag = NULL;
-	if (umount(SHARED_DIR) < 0 &&
-	    umount2(SHARED_DIR, MNT_DETACH)) {
+	if (umount("/tmp/hyper/shared") < 0 &&
+	    umount2("/tmp/hyper/shared", MNT_DETACH)) {
 		perror("fail to umount shared dir");
 		return;
 	}
 
-	if (rmdir(SHARED_DIR) < 0)
-		perror("fail to delete " SHARED_DIR);
+	if (rmdir("/tmp/hyper/shared") < 0)
+		perror("fail to delete /tmp/hyper/shared");
 
 	sync();
 }
@@ -1063,8 +1054,6 @@ static int hyper_channel_handle(struct hyper_event *de, uint32_t len)
 	uint8_t *data = NULL;
 	int i, ret = 0;
 
-	// append a null byte to it. hyper_event_read() left this room for us.
-	buf->data[buf->get] = 0;
 	for (i = 0; i < buf->get; i++)
 		fprintf(stdout, "%0x ", buf->data[i]);
 
